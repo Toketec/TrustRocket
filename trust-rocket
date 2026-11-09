@@ -1,0 +1,572 @@
+#!/usr/bin/env python3
+"""TrustRocket Genesis and project validator.
+
+The CLI intentionally performs no Git write operations. Genesis normalization
+only adds missing framework entries and directories; it never moves, deletes,
+or overwrites existing user content.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
+
+VERSION = "1.0.0"
+FRAMEWORK_ROOT = Path(__file__).resolve().parent
+TEMPLATE_ROOT = FRAMEWORK_ROOT / "template"
+DOMAINS = ("装备材料", "技术支持", "案例沉淀", "一线运营")
+RESOURCE_DIRS = ("source", "cut")
+REQUIRED_ROOT_FILES = (
+    "README.md",
+    "TRUSTROCKET.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".trustrocket.json",
+)
+IGNORABLE_EMPTY_ENTRIES = {".DS_Store", "Thumbs.db"}
+FRAMEWORK_STATE_NAMES = {
+    "status.md",
+    "progress.md",
+    "worklog.md",
+    "todo.md",
+    "roadmap.md",
+    "ai-scratchpad.md",
+}
+BINARY_PACKAGING_EXTENSIONS = {
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".pdf",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+}
+TEXT_EXTENSIONS = {
+    ".md",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".csv",
+    ".tsv",
+    ".sh",
+    ".py",
+}
+PERSONAL_CONFIG_PATTERNS = (
+    ("本地代理地址", re.compile(r"127\.0\.0\.1:\d{2,5}")),
+    (
+        "代理环境变量",
+        re.compile(r"\b(?:HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|SOCKS_PROXY)\s*[:=]\s*\S+", re.I),
+    ),
+    ("本机用户目录", re.compile(r"(?:/Users|/home)/[^/\s`'\"]+")),
+    (
+        "疑似密钥或令牌",
+        re.compile(
+            r"\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|cookie|secret)\s*[:=]\s*['\"]?[A-Za-z0-9_./+\-=]{8,}",
+            re.I,
+        ),
+    ),
+)
+
+
+@dataclass(frozen=True)
+class Finding:
+    severity: str
+    code: str
+    path: str
+    message: str
+
+    def render(self) -> str:
+        icon = "错误" if self.severity == "error" else "警告"
+        location = f" [{self.path}]" if self.path else ""
+        return f"{icon} {self.code}{location}: {self.message}"
+
+
+@dataclass
+class HeadingNode:
+    level: int
+    line: int
+    title: str
+    has_child: bool = False
+    has_direct_body: bool = False
+
+
+def relative_display(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def is_ignored_internal_path(path: Path, root: Path) -> bool:
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        return False
+    return any(part in {".git", ".hg", ".svn", "__pycache__"} for part in parts)
+
+
+def iter_template_files() -> Iterable[Path]:
+    return (path for path in TEMPLATE_ROOT.rglob("*") if path.is_file())
+
+
+def copy_template(target: Path, missing_only: bool) -> list[str]:
+    copied: list[str] = []
+    for source in iter_template_files():
+        relative = source.relative_to(TEMPLATE_ROOT)
+        destination = target / relative
+        if destination.exists():
+            if missing_only:
+                continue
+            raise FileExistsError(f"目标已存在，拒绝覆盖: {destination}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        copied.append(relative.as_posix())
+    for domain in DOMAINS:
+        for resource_dir in RESOURCE_DIRS:
+            (target / domain / resource_dir).mkdir(parents=True, exist_ok=True)
+    return copied
+
+
+def ensure_valid_target(target: Path) -> None:
+    if target.exists() and not target.is_dir():
+        raise ValueError(f"目标不是目录: {target}")
+
+
+def command_init(target: Path) -> int:
+    ensure_valid_target(target)
+    if not TEMPLATE_ROOT.is_dir():
+        print(f"错误: 找不到模板目录 {TEMPLATE_ROOT}", file=sys.stderr)
+        return 2
+    if target.exists():
+        remaining = [p for p in target.iterdir() if p.name not in IGNORABLE_EMPTY_ENTRIES]
+        if remaining:
+            print("错误: genesis init 只接受不存在或为空的目录；已有项目请使用 genesis normalize。", file=sys.stderr)
+            return 2
+    else:
+        target.mkdir(parents=True)
+    try:
+        copied = copy_template(target, missing_only=False)
+    except (OSError, ValueError) as exc:
+        print(f"错误: 初始化失败: {exc}", file=sys.stderr)
+        return 2
+    print(f"TrustRocket 项目已初始化: {target.resolve()}")
+    print(f"已创建 {len(copied)} 个最小骨架文件；未执行任何 Git 写操作。")
+    return command_validate(target)
+
+
+def classify_candidate(path: Path) -> str:
+    name = path.name.lower()
+    domain_keywords = (
+        ("装备材料", ("指南", "手册", "sop", "faq", "培训", "验收", "部署", "配置", "操作", "checklist")),
+        ("技术支持", ("故障", "问题", "工单", "诊断", "报错", "incident", "support", "log", "日志")),
+        ("案例沉淀", ("案例", "复盘", "根因", "最佳实践", "经验", "case", "rca", "反模式")),
+        ("一线运营", ("客户", "poc", "交付", "售后", "风险", "周报", "运营", "健康度", "续费", "sla")),
+    )
+    matches = [domain for domain, keywords in domain_keywords if any(keyword in name for keyword in keywords)]
+    if len(matches) == 1:
+        domain = matches[0]
+        if path.suffix.lower() in TEXT_EXTENSIONS:
+            return f"候选业务域: {domain}（需结合内容确认）"
+        return f"候选原材料: {domain}/source/（需确认来源与 user- 前缀）"
+    if len(matches) > 1:
+        return f"多个候选业务域: {'、'.join(matches)}（必须人工判断）"
+    if path.suffix.lower() in BINARY_PACKAGING_EXTENSIONS:
+        return "候选原材料: 某业务域/source/（仅凭文件名无法判断业务域）"
+    return "未能可靠分类，保持原位并读取内容后判断"
+
+
+def normalization_suggestions(target: Path) -> list[tuple[str, str]]:
+    known_root = set(REQUIRED_ROOT_FILES) | set(DOMAINS) | {".gitignore", ".git"}
+    suggestions: list[tuple[str, str]] = []
+    for entry in sorted(target.iterdir(), key=lambda p: p.name):
+        if entry.name in known_root or entry.name in IGNORABLE_EMPTY_ENTRIES:
+            continue
+        if entry.is_file():
+            suggestions.append((entry.name, classify_candidate(entry)))
+        elif entry.is_dir():
+            suggestions.append((entry.name + "/", "非标准根目录；先理解用途，不自动移动或删除"))
+    return suggestions
+
+
+def command_normalize(target: Path, apply: bool) -> int:
+    ensure_valid_target(target)
+    if not target.is_dir():
+        print(f"错误: 目标目录不存在: {target}", file=sys.stderr)
+        return 2
+    suggestions = normalization_suggestions(target)
+    if apply:
+        try:
+            copied = copy_template(target, missing_only=True)
+        except OSError as exc:
+            print(f"错误: 安全补齐失败: {exc}", file=sys.stderr)
+            return 2
+        print(f"已安全补齐 {len(copied)} 个缺失骨架文件或占位；未覆盖、移动、删除内容。")
+    else:
+        print("只读规范化分析；使用 --apply 仅补齐缺失骨架，不会移动现有内容。")
+    if suggestions:
+        print("现有内容候选归类:")
+        for path, suggestion in suggestions:
+            print(f"- {path}: {suggestion}")
+    else:
+        print("未发现需要候选归类的根部内容。")
+    return command_validate(target)
+
+
+def read_json_config(root: Path, findings: list[Finding]) -> dict:
+    config_path = root / ".trustrocket.json"
+    if not config_path.is_file():
+        findings.append(Finding("error", "TR001", ".trustrocket.json", "缺少机器配置入口。"))
+        return {}
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        findings.append(Finding("error", "TR002", ".trustrocket.json", f"配置不是有效 JSON: {exc}"))
+        return {}
+    if config.get("domains") != list(DOMAINS):
+        findings.append(Finding("error", "TR003", ".trustrocket.json", "domains 必须且只能按标准顺序包含四个业务域。"))
+    if config.get("content_model") != "flat-markdown-source-cut":
+        findings.append(Finding("error", "TR004", ".trustrocket.json", "content_model 必须为 flat-markdown-source-cut。"))
+    if not isinstance(config.get("materials", {}), dict):
+        findings.append(Finding("error", "TR005", ".trustrocket.json", "materials 必须是路径到来源信息的对象。"))
+    return config
+
+
+def validate_structure(root: Path, findings: list[Finding]) -> None:
+    for required in REQUIRED_ROOT_FILES:
+        if not (root / required).is_file():
+            findings.append(Finding("error", "TR010", required, "缺少 TrustRocket 项目入口文件。"))
+    for domain in DOMAINS:
+        domain_path = root / domain
+        if not domain_path.is_dir():
+            findings.append(Finding("error", "TR011", domain, "缺少标准业务域目录。"))
+            continue
+        for resource_dir in RESOURCE_DIRS:
+            if not (domain_path / resource_dir).is_dir():
+                findings.append(
+                    Finding("error", "TR012", f"{domain}/{resource_dir}", "缺少强制资源目录。")
+                )
+        for child in domain_path.iterdir():
+            if child.is_dir() and child.name not in RESOURCE_DIRS:
+                findings.append(
+                    Finding("error", "TR013", relative_display(child, root), "业务域只允许 source/ 和 cut/ 子目录。")
+                )
+            if child.is_file() and child.name != ".gitkeep" and child.suffix.lower() != ".md":
+                findings.append(
+                    Finding(
+                        "error",
+                        "TR014",
+                        relative_display(child, root),
+                        "业务域根部只允许平铺 Markdown；原件放 source/，切出资源放 cut/。",
+                    )
+                )
+
+
+def parse_markdown(path: Path, root: Path, findings: list[Finding]) -> None:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        findings.append(Finding("error", "TR020", relative_display(path, root), f"无法读取 Markdown: {exc}"))
+        return
+    nodes: list[HeadingNode] = []
+    stack: list[HeadingNode] = []
+    in_fence = False
+    fence_marker = ""
+    for line_number, line in enumerate(lines, start=1):
+        stripped = line.lstrip()
+        fence = re.match(r"^(```+|~~~+)", stripped)
+        if fence:
+            marker = fence.group(1)[0]
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif marker == fence_marker:
+                in_fence = False
+                fence_marker = ""
+            if stack:
+                stack[-1].has_direct_body = True
+            continue
+        if in_fence:
+            if stripped and stack:
+                stack[-1].has_direct_body = True
+            continue
+        heading = re.match(r"^(#{1,6})\s+(.*?)\s*$", line)
+        if heading:
+            level = len(heading.group(1))
+            title = heading.group(2)
+            if level > 3:
+                findings.append(
+                    Finding(
+                        "error",
+                        "TR021",
+                        f"{relative_display(path, root)}:{line_number}",
+                        f"业务 Markdown 最多三级标题，发现 {level} 级标题。",
+                    )
+                )
+            while stack and stack[-1].level >= level:
+                stack.pop()
+            if stack:
+                if level > stack[-1].level + 1:
+                    findings.append(
+                        Finding(
+                            "error",
+                            "TR022",
+                            f"{relative_display(path, root)}:{line_number}",
+                            "标题层级发生跳跃。",
+                        )
+                    )
+                stack[-1].has_child = True
+            elif level > 1:
+                findings.append(
+                    Finding(
+                        "error",
+                        "TR022",
+                        f"{relative_display(path, root)}:{line_number}",
+                        "文档顶层标题必须从一级开始。",
+                    )
+                )
+            node = HeadingNode(level=level, line=line_number, title=title)
+            nodes.append(node)
+            stack.append(node)
+            continue
+        if stripped:
+            if stack:
+                stack[-1].has_direct_body = True
+            else:
+                findings.append(
+                    Finding(
+                        "error",
+                        "TR023",
+                        f"{relative_display(path, root)}:{line_number}",
+                        "正文出现在首个标题之前。",
+                    )
+                )
+    if not nodes:
+        findings.append(Finding("warning", "TR024", relative_display(path, root), "业务 Markdown 没有标题。"))
+    for node in nodes:
+        if node.has_child and node.has_direct_body:
+            findings.append(
+                Finding(
+                    "error",
+                    "TR025",
+                    f"{relative_display(path, root)}:{node.line}",
+                    f"非叶子标题“{node.title}”直接承载正文。",
+                )
+            )
+
+
+def validate_markdown(root: Path, findings: list[Finding]) -> None:
+    for domain in DOMAINS:
+        domain_path = root / domain
+        if not domain_path.is_dir():
+            continue
+        for path in domain_path.glob("*.md"):
+            parse_markdown(path, root, findings)
+        for resource_dir in RESOURCE_DIRS:
+            resource_path = domain_path / resource_dir
+            if resource_path.is_dir():
+                for markdown in resource_path.rglob("*.md"):
+                    findings.append(
+                        Finding(
+                            "warning",
+                            "TR026",
+                            relative_display(markdown, root),
+                            "source/ 与 cut/ 原则上不主动保存业务 Markdown。",
+                        )
+                    )
+
+
+def normalize_material_record(record: object) -> tuple[str | None, bool]:
+    if isinstance(record, str):
+        return record, False
+    if isinstance(record, dict):
+        origin = record.get("origin")
+        approved_binary = record.get("approved_binary", False)
+        return origin if isinstance(origin, str) else None, approved_binary is True
+    return None, False
+
+
+def validate_materials(root: Path, config: dict, findings: list[Finding]) -> None:
+    materials = config.get("materials", {})
+    if not isinstance(materials, dict):
+        return
+    registered: set[str] = set()
+    for relative, record in materials.items():
+        if not isinstance(relative, str):
+            findings.append(Finding("error", "TR030", ".trustrocket.json", "materials 的键必须是相对路径字符串。"))
+            continue
+        registered.add(Path(relative).as_posix())
+        material_path = Path(relative)
+        if material_path.is_absolute() or ".." in material_path.parts:
+            findings.append(Finding("error", "TR031", relative, "素材登记必须使用项目内相对路径。"))
+            continue
+        if (
+            len(material_path.parts) < 3
+            or material_path.parts[0] not in DOMAINS
+            or material_path.parts[1] not in RESOURCE_DIRS
+        ):
+            findings.append(
+                Finding("error", "TR038", relative, "素材必须登记在某个业务域的 source/ 或 cut/ 中。")
+            )
+        absolute = root / material_path
+        origin, approved_binary = normalize_material_record(record)
+        if origin not in {"user", "public", "generated"}:
+            findings.append(Finding("error", "TR032", relative, "origin 必须是 user、public 或 generated。"))
+        basename = material_path.name
+        if origin == "user" and not basename.startswith("user-"):
+            findings.append(Finding("error", "TR033", relative, "用户素材及其切出资源必须使用 user- 前缀。"))
+        if origin == "public" and basename.startswith("user-"):
+            findings.append(Finding("error", "TR034", relative, "公共素材不得使用 user- 前缀。"))
+        if origin == "generated" and absolute.suffix.lower() in BINARY_PACKAGING_EXTENSIONS and not approved_binary:
+            findings.append(
+                Finding("error", "TR035", relative, "生成型二进制未登记 approved_binary: true。默认应使用文本。")
+            )
+        if not absolute.is_file():
+            findings.append(Finding("error", "TR036", relative, "素材登记指向的文件不存在。"))
+    for domain in DOMAINS:
+        for resource_dir in RESOURCE_DIRS:
+            resource_path = root / domain / resource_dir
+            if not resource_path.is_dir():
+                continue
+            for file_path in resource_path.rglob("*"):
+                if not file_path.is_file() or file_path.name == ".gitkeep":
+                    continue
+                relative = relative_display(file_path, root)
+                if relative not in registered:
+                    findings.append(
+                        Finding("warning", "TR037", relative, "素材未在 .trustrocket.json 的 materials 中登记来源。")
+                    )
+
+
+def validate_state_files(root: Path, findings: list[Finding]) -> None:
+    for path in root.rglob("*"):
+        if is_ignored_internal_path(path, root):
+            continue
+        if path.is_file() and path.name.lower() in FRAMEWORK_STATE_NAMES:
+            findings.append(
+                Finding(
+                    "error",
+                    "TR040",
+                    relative_display(path, root),
+                    "禁止维护 TrustRocket 自身进度、工作日志、待办或路线图状态文件。",
+                )
+            )
+
+
+def is_under_source(path: Path, root: Path) -> bool:
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        return False
+    return len(parts) >= 2 and parts[0] in DOMAINS and parts[1] == "source"
+
+
+def validate_personal_config(root: Path, findings: list[Finding]) -> None:
+    for path in root.rglob("*"):
+        if is_ignored_internal_path(path, root):
+            continue
+        if not path.is_file() or path.name == ".gitkeep":
+            continue
+        if path.suffix.lower() not in TEXT_EXTENSIONS and path.name not in {"AGENTS.md", "TRUSTROCKET.md"}:
+            continue
+        try:
+            if path.stat().st_size > 2_000_000:
+                continue
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        for label, pattern in PERSONAL_CONFIG_PATTERNS:
+            match = pattern.search(text)
+            if not match:
+                continue
+            line = text.count("\n", 0, match.start()) + 1
+            severity = "warning" if is_under_source(path, root) else "error"
+            message = f"发现{label}，不得沉淀个人环境配置。"
+            if severity == "warning":
+                message += " 原始诊断材料请限制访问，并在复用前脱敏。"
+            findings.append(
+                Finding(severity, "TR050", f"{relative_display(path, root)}:{line}", message)
+            )
+
+
+def validate_project(root: Path) -> list[Finding]:
+    findings: list[Finding] = []
+    validate_structure(root, findings)
+    config = read_json_config(root, findings)
+    validate_markdown(root, findings)
+    validate_materials(root, config, findings)
+    validate_state_files(root, findings)
+    validate_personal_config(root, findings)
+    return findings
+
+
+def command_validate(target: Path) -> int:
+    ensure_valid_target(target)
+    if not target.is_dir():
+        print(f"错误: 目标目录不存在: {target}", file=sys.stderr)
+        return 2
+    findings = validate_project(target)
+    errors = [finding for finding in findings if finding.severity == "error"]
+    warnings = [finding for finding in findings if finding.severity == "warning"]
+    for finding in findings:
+        print(finding.render())
+    if errors:
+        print(f"校验失败: {len(errors)} 个错误，{len(warnings)} 个警告。")
+        return 1
+    print(f"校验通过: 0 个错误，{len(warnings)} 个警告。")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="trust-rocket",
+        description="TrustRocket Genesis 与业务项目契约校验器（不会执行 Git 写操作）",
+    )
+    parser.add_argument("--version", action="version", version=f"TrustRocket {VERSION}")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    genesis = subparsers.add_parser("genesis", help="初始化或规范化 TrustRocket 业务项目")
+    genesis_subparsers = genesis.add_subparsers(dest="genesis_command", required=True)
+    init_parser = genesis_subparsers.add_parser("init", help="在不存在或空目录创建最小业务项目")
+    init_parser.add_argument("target", type=Path, nargs="?", default=Path("."))
+    normalize_parser = genesis_subparsers.add_parser("normalize", help="分析已有项目并可安全补齐骨架")
+    normalize_parser.add_argument("target", type=Path, nargs="?", default=Path("."))
+    normalize_parser.add_argument("--apply", action="store_true", help="只补齐缺失骨架，不移动、删除或覆盖")
+
+    validate_parser = subparsers.add_parser("validate", help="只读校验 TrustRocket 业务项目")
+    validate_parser.add_argument("target", type=Path, nargs="?", default=Path("."))
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    try:
+        if args.command == "genesis" and args.genesis_command == "init":
+            return command_init(args.target)
+        if args.command == "genesis" and args.genesis_command == "normalize":
+            return command_normalize(args.target, args.apply)
+        if args.command == "validate":
+            return command_validate(args.target)
+    except (OSError, ValueError) as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        return 2
+    parser.error("未知命令")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

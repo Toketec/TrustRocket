@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rocketos.local/trustrocket/execution-contract.schema.json",
+  "title": "TrustRocket Execution Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "version",
+    "domain",
+    "goal",
+    "triggers",
+    "contexts",
+    "inputs",
+    "preconditions",
+    "procedure",
+    "outputs",
+    "acceptance",
+    "exceptions",
+    "escalation",
+    "permissions",
+    "eligible_executors"
+  ],
+  "properties": {
+    "id": {"type": "string", "pattern": "^tr-cap-[a-z0-9-]+$"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "domain": {
+      "enum": ["装备材料", "技术支持", "案例沉淀", "一线运营"]
+    },
+    "goal": {"type": "string", "minLength": 1},
+    "triggers": {"$ref": "#/$defs/stringList"},
+    "contexts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ToB", "ToC"],
+      "properties": {
+        "ToB": {"$ref": "#/$defs/stringList"},
+        "ToC": {"$ref": "#/$defs/stringList"}
+      }
+    },
+    "inputs": {"$ref": "#/$defs/stringList"},
+    "preconditions": {"$ref": "#/$defs/stringList"},
+    "procedure": {"$ref": "#/$defs/stepList"},
+    "outputs": {"$ref": "#/$defs/stringList"},
+    "acceptance": {"$ref": "#/$defs/stringList"},
+    "exceptions": {"$ref": "#/$defs/stringList"},
+    "escalation": {"$ref": "#/$defs/stringList"},
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "approval_required", "forbidden"],
+      "properties": {
+        "allowed": {"$ref": "#/$defs/stringList"},
+        "approval_required": {"$ref": "#/$defs/stringList"},
+        "forbidden": {"$ref": "#/$defs/stringList"}
+      }
+    },
+    "eligible_executors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "requirements"],
+        "properties": {
+          "type": {
+            "enum": ["Human", "AI Agent", "Script", "Automation", "External Service", "Human + AI"]
+          },
+          "requirements": {"$ref": "#/$defs/stringList"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stringList": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "stepList": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["step", "action"],
+        "properties": {
+          "step": {"type": "integer", "minimum": 1},
+          "action": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}
