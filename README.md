@@ -90,7 +90,7 @@ CLI 还提供常用的开发辅助命令：
 /path/to/TrustRocket/trust-rocket document equipment 部署/快速开始 --title "快速开始" --project ./customer-success
 
 # 在业务域内创建或登记一个独立应用目录
-/path/to/TrustRocket/trust-rocket app equipment POC助手 --project ./customer-success
+/path/to/TrustRocket/trust-rocket app equipment poc-assistant --project ./customer-success
 
 # 登记已放入 source/ 或 cut/ 的素材
 /path/to/TrustRocket/trust-rocket material 装备材料/部署/source/user-manual.pdf --origin user --project ./customer-success
@@ -117,9 +117,9 @@ project/
 └── 一线运营/
 ```
 
-AI 执行 `/trust-rocket init` 时先立即创建标准骨架，再使用当前对话和已有材料生成起点。只在必要时提出最多三个短问题：业务锚点、当前最想解决的工作，以及可选的一个条件分支问题。每次只问一件事，现成材料不占用一个问题。
+AI 执行 `/trust-rocket init` 时先立即创建根入口、四个空业务域、空的 `skills/` 和机器配置，再引导用户选择本次要规划内部目录的板块。对已选板块，Agent 根据当前工作和材料提出最小候选目录树，说明归类依据，并在用户确认后建立。
 
-TrustRocket 自动把用户的日常表述映射到四个业务域。优先板块写入具体起步工作，其余板块创建简短的标准基线；后续内容在真实的装备、支持、复盘和运营过程中持续沉淀。信息足够时会自动生成、校验并结束，不再反问“是否生成”。纯 CLI `trust-rocket init` 保持非交互，只创建骨架。
+用户可以只规划部分板块，或选择“暂不规划”。未选板块保持空目录，不生成启动文档、标准基线或未经确认的分类。纯 CLI `trust-rocket init` 保持非交互，只创建骨架。
 
 `skills/` 默认为空。当某个处理流程已实际跑通、效果经用户确认且可能多次复用时，可沉淀为 `skills/<skill-name>/SKILL.md`，并按需携带参数化脚本、参考与资源。临时脚本和未验证方案不会被自动沉淀。
 
@@ -129,7 +129,7 @@ TrustRocket 自动把用户的日常表述映射到四个业务域。优先板�
 
 | 命令 | 能力 |
 |:--|:--|
-| `/trust-rocket init` | 引导规划四板块、引入初始材料并生成可用项目 |
+| `/trust-rocket init` | 引导确认四板块内部目录并生成可用项目 |
 | `/trust-rocket migrate` | 安全规范化已有项目 |
 | `/trust-rocket update` | 更新 TrustRocket 框架仓库 |
 | `/trust-rocket document` | 创建 Markdown 内容和同级 source/cut |
@@ -160,7 +160,10 @@ Skill 是执行说明，不是业务事实源。权威方法论位于 `trustrock
 - `source/` 与 `cut/` 专门服务同级 Markdown：原件放入 `source/`，从原件切出的独立资源放入 `cut/`。
 - 用户提供的素材使用 `user-` 前缀；公共来源不使用该前缀。
 - 一个目录直接包含 Markdown 时，必须同时存在同级 `source/`、`cut/`；没有 Markdown 时默认不建立。
-- 四域内允许按业务需要创建普通子目录。基于文档创建的小程序或应用，其内部目录遵循代码项目自身规范，不套用文档资源目录规则。
+- 四域内只创建用户已确认的业务子目录；用户留空时不预建任何分类。
+- 开始向某个业务域保存内容前，先检查是否已有唯一、含义明确的目录。如果没有，先给出最小目录建议和合规说明，得到用户确认后再创建并继续工作。
+- 普通业务目录和文件默认用中文；`source/`、`cut/`、`skills/` 等框架专用目录以及应用根目录和技术目录优先用英文。
+- 基于文档创建的小程序或应用，其内部目录遵循代码项目自身规范，不套用文档资源目录规则。
 - 默认不生成 DOCX、XLSX、PPTX、PDF 或图片包装；使用者明确要求时可以生成，同时优先保留文本事实源。
 
 ## Git 边界
