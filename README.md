@@ -96,7 +96,9 @@ CLI 还提供常用的开发辅助命令：
 /path/to/TrustRocket/trust-rocket material 装备材料/部署/source/user-manual.pdf --origin user --project ./customer-success
 ```
 
-`init`、`migrate`、项目辅助命令和 `validate` 不会执行 `git init`、提交、推送、打标签或发布。`update` 是唯一会访问远端并快进更新框架仓库的命令，它会在工作区有未提交修改时拒绝执行。
+`init`、`migrate`、项目辅助命令和 `validate` 不会执行 `git init`、提交、推送、打标签或发布。`update` 是唯一会访问远端的命令：它获取 `origin` 默认分支与全部标签，支持普通分支、标签检出、Git worktree 和浅克隆，只执行安全快进。更新后会重新读取实际版本并用新版 Validator 校验模板。工作区有修改或历史分叉时会安全停止，不会强制覆盖。
+
+`update` 只更新 TrustRocket 框架仓库，不会改写已创建的业务项目。ZIP 解压目录无法持续更新，需使用 `git clone` 安装。
 
 ## Genesis 产物
 

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 FRAMEWORK_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = FRAMEWORK_ROOT / "template"
 DOMAINS = ("装备材料", "技术支持", "案例沉淀", "一线运营")
@@ -379,37 +379,122 @@ def command_normalize(target: Path, apply: bool) -> int:
 
 
 def command_update() -> int:
-    if not (FRAMEWORK_ROOT / ".git").is_dir():
+    def run_git(*arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *arguments],
+            cwd=FRAMEWORK_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    inside = run_git("rev-parse", "--is-inside-work-tree")
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
         print("错误: 当前 TrustRocket 不是 Git 克隆，无法自动更新。", file=sys.stderr)
+        print("请使用 git clone 获取 TrustRocket；ZIP 解压目录不包含可更新的 Git 历史。", file=sys.stderr)
         return 2
-    status = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=FRAMEWORK_ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+
+    repository_root = run_git("rev-parse", "--show-toplevel")
+    if repository_root.returncode != 0 or Path(repository_root.stdout.strip()).resolve() != FRAMEWORK_ROOT:
+        print("错误: trust-rocket 不位于当前 Git 仓库根目录，拒绝更新其他仓库。", file=sys.stderr)
+        return 2
+
+    status = run_git("status", "--porcelain")
     if status.returncode != 0:
         print("错误: 无法读取 TrustRocket Git 状态。", file=sys.stderr)
         return 2
     if status.stdout.strip():
         print("错误: TrustRocket 工作区存在未提交修改；请先人工处理后再 update。", file=sys.stderr)
         return 2
-    remote = subprocess.run(
-        ["git", "remote", "get-url", "origin"],
+
+    remote = run_git("remote", "get-url", "origin")
+    if remote.returncode != 0 or "trustrocket" not in remote.stdout.strip().lower():
+        print("错误: origin 不是可识别的 TrustRocket 远端。", file=sys.stderr)
+        return 2
+
+    before_commit = run_git("rev-parse", "HEAD")
+    if before_commit.returncode != 0:
+        print("错误: 无法读取当前 TrustRocket 版本。", file=sys.stderr)
+        return 2
+
+    shallow = run_git("rev-parse", "--is-shallow-repository")
+    fetch_arguments = ["fetch", "origin", "--prune", "--tags"]
+    if shallow.returncode == 0 and shallow.stdout.strip() == "true":
+        fetch_arguments.insert(1, "--unshallow")
+    fetched = run_git(*fetch_arguments)
+    if fetched.returncode != 0:
+        detail = fetched.stderr.strip() or fetched.stdout.strip()
+        print(f"错误: 无法获取 TrustRocket 远端更新。{(' ' + detail) if detail else ''}", file=sys.stderr)
+        return fetched.returncode
+
+    default_branch = ""
+    remote_head = run_git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if remote_head.returncode == 0 and remote_head.stdout.strip().startswith("origin/"):
+        default_branch = remote_head.stdout.strip().removeprefix("origin/")
+        remote_head_exists = run_git(
+            "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{default_branch}"
+        )
+        if remote_head_exists.returncode != 0:
+            default_branch = ""
+    if not default_branch:
+        for candidate in ("main", "master"):
+            exists = run_git("show-ref", "--verify", "--quiet", f"refs/remotes/origin/{candidate}")
+            if exists.returncode == 0:
+                default_branch = candidate
+                break
+    if not default_branch:
+        print("错误: 无法确定 origin 的默认分支。", file=sys.stderr)
+        return 2
+
+    target = f"refs/remotes/origin/{default_branch}"
+    ancestor = run_git("merge-base", "--is-ancestor", "HEAD", target)
+    if ancestor.returncode == 1:
+        print("错误: 本地历史与远端默认分支已分叉，不能安全快进更新。", file=sys.stderr)
+        print("本地内容未被强制覆盖；请人工处理本地提交后重试。", file=sys.stderr)
+        return 2
+    if ancestor.returncode != 0:
+        print("错误: 无法确认本地与远端的版本关系。", file=sys.stderr)
+        return 2
+
+    merged = run_git("merge", "--ff-only", target)
+    if merged.returncode != 0:
+        detail = merged.stderr.strip() or merged.stdout.strip()
+        print(f"错误: 快进更新失败。{(' ' + detail) if detail else ''}", file=sys.stderr)
+        print("本地内容未被强制覆盖。", file=sys.stderr)
+        return merged.returncode
+
+    after_commit = run_git("rev-parse", "HEAD")
+    updated_cli = FRAMEWORK_ROOT / "trust-rocket"
+    version_result = subprocess.run(
+        [sys.executable, str(updated_cli), "--version"],
         cwd=FRAMEWORK_ROOT,
         text=True,
         capture_output=True,
         check=False,
     )
-    if remote.returncode != 0 or "TrustRocket" not in remote.stdout:
-        print("错误: origin 不是可识别的 TrustRocket 远端。", file=sys.stderr)
-        return 2
-    result = subprocess.run(["git", "pull", "--ff-only"], cwd=FRAMEWORK_ROOT, check=False)
-    if result.returncode != 0:
-        print("错误: 更新失败；本地内容未被强制覆盖。", file=sys.stderr)
-        return result.returncode
-    print(f"TrustRocket 已更新到 {VERSION} 兼容结构。")
+    actual_version = version_result.stdout.strip() if version_result.returncode == 0 else "TrustRocket 未知版本"
+
+    validation = subprocess.run(
+        [sys.executable, str(updated_cli), "validate", str(TEMPLATE_ROOT)],
+        cwd=FRAMEWORK_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if validation.returncode != 0:
+        detail = validation.stdout.strip() or validation.stderr.strip()
+        print(f"错误: 框架已快进，但新版本模板校验失败。{(' ' + detail) if detail else ''}", file=sys.stderr)
+        return validation.returncode
+
+    before_short = before_commit.stdout.strip()[:7]
+    after_short = after_commit.stdout.strip()[:7] if after_commit.returncode == 0 else "unknown"
+    if before_short == after_short:
+        print(f"TrustRocket 已是最新版本: {actual_version}")
+    else:
+        print(f"TrustRocket 更新完成: {VERSION} -> {actual_version.removeprefix('TrustRocket ')}")
+        print(f"提交: {before_short} -> {after_short}")
+    print(validation.stdout.strip())
+    print("框架仓库已完整更新；已有业务项目未被自动覆盖。")
     return 0
 
 
@@ -863,7 +948,7 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_parser.add_argument("target", type=Path, nargs="?", default=Path("."))
     migrate_parser.add_argument("--apply", action="store_true", help="只补齐缺失骨架，不移动、删除或覆盖")
 
-    subparsers.add_parser("update", help="在工作区干净时从 origin 快进更新 TrustRocket")
+    subparsers.add_parser("update", help="完整获取 origin 并安全快进到最新 TrustRocket")
 
     document_parser = subparsers.add_parser("document", help="创建 Markdown 内容并配套 source/cut")
     document_parser.add_argument("domain", help="equipment/support/case/operations 或中文业务域")

@@ -3,7 +3,7 @@ name: trust-rocket
 description: "斜杠命令 /trust-rocket — 客户服务、交付支持与客户成功标准体系。子命令：init, migrate, update, document, app, material, skill, equipment, support, case, operations, validate。"
 license: MIT
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # `/trust-rocket` — TrustRocket 执行指南
@@ -177,12 +177,23 @@ Agent 在写入前展示一份初始化摘要：项目背景、四板块内容�
 
 | CLI | 行为 |
 |:--|:--|
-| `./trust-rocket update` | 仅在 TrustRocket 框架工作区干净且 `origin` 可识别时执行快进更新 |
+| `./trust-rocket update` | 完整获取 `origin` 默认分支与标签，安全快进到最新框架版本 |
 | `./trust-rocket document <业务域> <路径> [--title <标题>] --project <项目>` | 创建一个 Markdown，并在其同级建立 `source/`、`cut/` |
 | `./trust-rocket app <业务域> <路径> --project <项目>` | 创建或登记应用根目录，内部结构不受文档目录规则约束 |
 | `./trust-rocket material <相对路径> --origin <user\|public\|generated> --project <项目>` | 登记已存在于 `source/` 或 `cut/` 的素材；生成型二进制还需 `--approved-binary` |
 
 `document`、`app` 和 `material` 都在写入后调用 Validator，不自动提交 Git。`update` 是使用者显式调用的框架更新动作，不强制覆盖本地修改。
+
+### `update` 完整更新流程
+
+1. 确认 CLI 位于 TrustRocket Git 仓库根目录，`origin` 可识别，且工作区没有未提交修改。
+2. 支持普通分支、标签检出的 detached HEAD、Git worktree 和浅克隆；浅克隆会先补齐历史。
+3. 获取 `origin` 的默认分支、全部标签和最新历史，只在当前 `HEAD` 是远端最新版本祖先时执行 `--ff-only` 快进。
+4. 工作区有修改或本地历史已分叉时安全停止，不 reset、不强制覆盖。
+5. 快进后调用已更新的 CLI 重新读取真实版本，并使用新版 Validator 校验 `template/`。
+6. 报告更新前后提交、实际新版本和模板校验结果。
+
+`update` 更新框架仓库的所有跟踪文件，但不覆盖已经创建的业务项目。ZIP 解压目录没有 Git 历史，必须先改用 `git clone` 安装才能持续更新。
 
 ## `/trust-rocket skill`
 
