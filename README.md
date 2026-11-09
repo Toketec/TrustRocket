@@ -115,7 +115,14 @@ project/
 └── 一线运营/
 ```
 
-Genesis 不生成空业务模板文档，也不为没有 Markdown 的目录预建 `source/`、`cut/`。业务内容在真实需求出现时创建；某个目录开始直接承载 Markdown 时，再在同级建立 `source/` 和 `cut/`。
+AI 执行 `/trust-rocket init` 时，会从用户熟悉的工作开始：想准备哪些内容、希望怎么分类和查找、问题平时怎么进来和处理、哪些经验值得留下、日常需要关注哪些客户事项。Agent 把这些回答整理成通俗的四板块“内容地图”，经用户确认后：
+
+- 将项目背景写入根 `README.md`；
+- 创建 `装备材料/内容规划.md`、`技术支持/工作开展.md`、`案例沉淀/内容规划.md`、`一线运营/工作开展.md`；
+- 为这些 Markdown 建立同级 `source/`、`cut/`；
+- 询问是否有现成文件、文件夹或附件可以引入，并先展示归类映射再复制和登记。
+
+每份启动文档都必须包含用户确认的事实或规划，不会生成空占位文档。纯 CLI `trust-rocket init` 保持非交互，只创建骨架。
 
 `skills/` 默认为空。当某个处理流程已实际跑通、效果经用户确认且可能多次复用时，可沉淀为 `skills/<skill-name>/SKILL.md`，并按需携带参数化脚本、参考与资源。临时脚本和未验证方案不会被自动沉淀。
 
@@ -125,7 +132,7 @@ Genesis 不生成空业务模板文档，也不为没有 Markdown 的目录预�
 
 | 命令 | 能力 |
 |:--|:--|
-| `/trust-rocket init` | 初始化空项目 |
+| `/trust-rocket init` | 引导规划四板块、引入初始材料并生成可用项目 |
 | `/trust-rocket migrate` | 安全规范化已有项目 |
 | `/trust-rocket update` | 更新 TrustRocket 框架仓库 |
 | `/trust-rocket document` | 创建 Markdown 内容和同级 source/cut |

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 FRAMEWORK_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = FRAMEWORK_ROOT / "template"
 DOMAINS = ("装备材料", "技术支持", "案例沉淀", "一线运营")
