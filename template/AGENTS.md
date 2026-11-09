@@ -1,11 +1,17 @@
 # TrustRocket 业务项目 — Agent 协作入口
 
+## 核心契约
+
+本项目只使用装备材料、技术支持、案例沉淀和一线运营四个一级业务域。TrustRocket 定义规则、结构、流程和交接语义，不是 CRM、工单系统、客户数据库、在线客服、知识库产品或 Agent 平台。
+
+执行者可以是 Human、AI Agent、Script、Automation、External Service 或组合；更换执行者不改变 Goal、Trigger、Input、Preconditions、Procedure、Output、Acceptance、Exception、Escalation 与 Permission。高风险判断、审批和责任不得因自动化而消失。
+
 ## 读取顺序
 
-1. 读取本文件和 `TRUSTROCKET.md`。
+1. 读取本文件。
 2. 读取 `.trustrocket.json` 了解四域和素材来源。
 3. 按当前任务只读目标业务域及必要的关联内容。
-4. 需要标准执行语义时读取 TrustRocket 框架的对应 Capability 或 Handoff Contract。
+4. 需要完整标准时读取 TrustRocket 框架的 `trustrocket-convention.zh.md` 与 `SKILL.md`。
 
 禁止为了“理解项目”无边界全量扫描；信息不足时再扩大读取范围。
 
@@ -28,9 +34,11 @@ ToB 与 ToC 使用同一四域结构，不创建平行目录。差异通过场�
 
 ## 文件规则
 
-- 业务 Markdown 直接放在对应业务域根部。
-- 原始文件放 `source/`，切出资源放 `cut/`。
-- 除 `source/` 与 `cut/` 外，不创建其他业务子目录。
+- 四域内可以按业务需要创建普通目录。
+- 任一普通目录直接包含业务 Markdown 时，必须同时在同级建立 `source/` 和 `cut/`；没有 Markdown 时默认不建立。
+- 原始文件放入对应 Markdown 目录的 `source/`，切出资源放入同级 `cut/`。
+- 基于文档创建的小程序或应用可以使用代码项目自身所需的目录结构，其内部 Markdown 不套用 `source/`、`cut/` 规则。
+- 应用根目录可登记到 `.trustrocket.json` 的 `application_paths`；常见项目清单也可由 Validator 自动识别。
 - 用户素材和切出资源使用 `user-` 前缀；公共素材不得使用该前缀冒充用户内容。
 - 生成内容优先写入 Markdown。未经明确要求，不生成 DOCX、XLSX、PPTX、PDF 或图片包装。
 - 截图优先保留原图；流程与关系只有在不遗漏、不误解、不编造时转为 Mermaid 或文本结构。
@@ -43,6 +51,16 @@ ToB 与 ToC 使用同一四域结构，不创建平行目录。差异通过场�
 - 正文只写在当前分支叶子标题下。
 - 装备材料使用最小充分信息，不堆砌背景、术语、重复总结或空泛内容。
 - 不强制所有材料使用同一模板；结构由读者、场景和风险决定。
+
+## 项目级 Skill 沉淀
+
+- `skills/` 只保存用户已确认、可重复执行且效果稳定的流程。
+- Agent 可在完成当前任务后建议沉淀，但未经用户明确确认不得创建、修改或提升为 Skill。
+- 沉淀前必须把临时操作抽象为稳定的触发条件、输入、步骤、输出、验收和异常处理。
+- 每个 Skill 位于 `skills/<skill-name>/`，必须包含 `SKILL.md`；可按需包含 `scripts/`、`references/`、`assets/`。
+- 脚本必须参数化，不得硬编码本机路径、代理、Token、Cookie、密钥、客户敏感信息或单次任务输入。
+- 一次性脚本、调试片段、未验证方案和仅对单个文件有效的过程不得进入 `skills/`。
+- 项目级 Skill 是执行方法，不代替四域中的业务事实、原始材料或最终产物。
 
 ## 支持与知识闭环
 

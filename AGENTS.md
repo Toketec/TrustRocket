@@ -4,15 +4,12 @@
 
 ## 权威来源
 
-- `trustrocket-contract.zh.md`：人可读总契约。
-- `trustrocket-contracts.json`：四域能力与跨域、跨体系 Handoff 的机器契约。
-- `execution-contract.schema.json`、`handoff.schema.json`：机器可校验的契约结构。
 - `trustrocket-convention.zh.md`：方法论正文。
 - `SKILL.md`：`/trust-rocket` 的完整执行规范。
 - `template/`：Genesis 分发到业务项目的最新骨架。
 - `trust-rocket`：初始化、规范化与校验实现。
 
-规则变化时只更新受影响内容，但必须保证总契约、Schema、Capability、Skill、模板与校验器的含义一致，各入口可独立使用。
+规则变化时只更新受影响内容，但必须保证方法论、Skill、模板与 CLI 的含义一致，各入口可独立使用。
 
 ## 框架边界
 
@@ -26,7 +23,9 @@
 ## 内容与状态边界
 
 - 默认使用适合 Git 的纯文本；二进制不得成为唯一事实来源。
-- 业务项目采用“平铺 Markdown + `source/` + `cut/`”，不得私增业务子目录。
+- `source/` 与 `cut/` 只服务同级 Markdown：目录直接包含 Markdown 时必须同时存在，没有 Markdown 时默认不建立。
+- 四域内允许创建普通业务目录；小程序或应用内部使用代码项目自身结构，不套用文档目录规则。
+- 业务项目根目录的 `skills/` 只存放经用户确认的稳定可复用流程；不得自动沉淀临时脚本。
 - TrustRocket 自身不维护开发进度、工作日志、AI 过程、待办或路线图状态文件；历史由 Git 承担。
 - 客户、项目、POC、交付、故障、服务、SLA 与外部依赖的真实业务状态允许在一线运营中维护。
 - 不把个人代理、用户目录、Token、Cookie、密钥或本机 workaround 写入框架、模板或配置。
@@ -42,4 +41,4 @@
 
 ## 验证范围
 
-修改 Genesis、契约或 Validator 时，在隔离临时目录实际执行初始化、规范化与校验；同时校验机器契约满足 Schema。验证结果只在当前回复报告，不在仓库保存测试夹具、验证报告、进度文件或工作日志。
+修改 Genesis、业务契约或 Validator 时，在隔离临时目录实际执行初始化、迁移和校验。验证结果只在当前回复报告，不在仓库保存测试夹具、验证报告、进度文件或工作日志。

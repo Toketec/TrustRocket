@@ -1,6 +1,7 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.2.0",
   "domains": ["装备材料", "技术支持", "案例沉淀", "一线运营"],
-  "content_model": "flat-markdown-source-cut",
+  "content_model": "markdown-scoped-source-cut",
+  "application_paths": [],
   "materials": {}
 }

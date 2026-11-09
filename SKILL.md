@@ -1,22 +1,21 @@
 ---
 name: trust-rocket
-description: "斜杠命令 /trust-rocket — 客户服务、交付支持与客户成功标准体系。子命令：genesis, equipment, support, case, operations, validate。"
+description: "斜杠命令 /trust-rocket — 客户服务、交付支持与客户成功标准体系。子命令：init, migrate, update, document, app, material, skill, equipment, support, case, operations, validate。"
 license: MIT
 metadata:
-  version: "1.0.0"
+  version: "1.2.0"
 ---
 
 # `/trust-rocket` — TrustRocket 执行指南
 
-TrustRocket 是人可执行、机器友好的业务标准。Skill 负责把请求路由到权威 Contract 并指导执行，不取代 Contract，也不假定执行者一定是 AI。
+TrustRocket 是人可执行、机器友好的业务标准。Skill 负责把请求路由到权威方法论和项目契约并指导执行，不假定执行者一定是 AI。
 
 ## 权威来源与读取顺序
 
 1. 当前任务中使用者的明确要求。
-2. 目标项目的 `TRUSTROCKET.md`、`AGENTS.md` 和 `.trustrocket.json`。
-3. 框架 `trustrocket-contract.zh.md`。
-4. `trustrocket-contracts.json` 中对应的 Capability 与 Handoff。
-5. 本 Skill 的流程说明。
+2. 目标项目的 `AGENTS.md` 和 `.trustrocket.json`。
+3. 框架 `trustrocket-convention.zh.md`。
+4. 本 Skill 的流程说明。
 
 只读取当前任务需要的域和关联内容；信息不足时再扩大范围。不得把 Prompt、工具习惯或行业术语当成高于业务契约的事实源。
 
@@ -24,12 +23,18 @@ TrustRocket 是人可执行、机器友好的业务标准。Skill 负责把请�
 
 | 命令 | 用途 |
 |:--|:--|
-| `/trust-rocket genesis [init|normalize]` | 初始化空项目或安全规范化已有项目 |
+| `/trust-rocket init` | 初始化空项目 |
+| `/trust-rocket migrate` | 安全规范化已有项目 |
+| `/trust-rocket update` | 更新 TrustRocket 框架仓库 |
+| `/trust-rocket document` | 创建 Markdown 内容及其 source/cut |
+| `/trust-rocket app` | 创建或登记业务域内的小程序、工具或应用 |
+| `/trust-rocket material` | 登记 source/cut 中的素材来源 |
+| `/trust-rocket skill` | 经用户确认后，把已验证的稳定流程沉淀为项目级 Skill |
 | `/trust-rocket equipment` | 创建、改写、校验和反哺装备材料 |
 | `/trust-rocket support` | 标准化、诊断、解决、升级和闭环问题 |
 | `/trust-rocket case` | 检索、创建、合并、改进和反哺案例 |
 | `/trust-rocket operations` | 收集外部状态、识别风险、汇总与分发反馈 |
-| `/trust-rocket validate` | 校验目录、Markdown、素材、状态、二进制和配置边界 |
+| `/trust-rocket validate` | 校验目录、项目级 Skill、Markdown、素材、状态、二进制和配置边界 |
 
 ## 通用执行协议
 
@@ -53,10 +58,12 @@ TrustRocket 是人可执行、机器友好的业务标准。Skill 负责把请�
 ## 通用内容规则
 
 - 四域固定为装备材料、技术支持、案例沉淀、一线运营。
-- 业务 Markdown 平铺在域根部；原件进 `source/`，切出资源进 `cut/`。
-- 除 `source/` 与 `cut/` 外，不在业务域新增子目录。
+- `source/` 与 `cut/` 只服务同级 Markdown；目录直接包含 Markdown 时必须同时存在，没有 Markdown 时默认不建立。
+- 四域内允许创建普通业务目录；小程序或应用内部按语言、框架和构建工具组织，不套用文档目录规则。
+- 应用目录可登记到 `.trustrocket.json` 的 `application_paths`，常见项目清单也可由 Validator 自动识别。
 - 用户素材和从中切出的资源使用 `user-` 前缀；公共素材不使用该前缀。
 - 新增素材时在 `.trustrocket.json` 的 `materials` 登记相对路径、`origin` 和必要的 `approved_binary`。
+- `skills/` 只保存经用户确认的稳定可复用流程；不自动沉淀临时脚本或未验证方案。
 - 默认写 Markdown 或其他纯文本；未经明确要求，不生成 DOCX、XLSX、PPTX、PDF 或图片包装。
 - 截图优先保留原图；流程或关系只有在可无损表达时才转为 Mermaid、表格、列表或 ASCII。
 - 业务 Markdown 最多三级标题；有子标题的标题不得直接有正文。
@@ -64,20 +71,20 @@ TrustRocket 是人可执行、机器友好的业务标准。Skill 负责把请�
 - 不把个人代理、本机用户目录、Token、Cookie、密钥、私有 DNS 和临时 workaround 写入项目。
 - 未经使用者明确要求，不执行 Git 提交、推送、标签、合并、变基或发布。
 
-## `/trust-rocket genesis`
+## `/trust-rocket init` 与 `/trust-rocket migrate`
 
 ### 初始化空项目
 
 执行：
 
 ```bash
-./trust-rocket genesis init <目标目录>
+./trust-rocket init <目标目录>
 ```
 
 步骤：
 
 1. 确认目标不存在或为空；系统元数据可忽略。
-2. 从框架 `template/` 复制最小入口和四域资源目录。
+2. 从框架 `template/` 复制最小入口、四域目录和空的 `skills/`，不预建资源目录。
 3. 不创建空业务文档，不初始化 Git，不提交。
 4. 运行 `./trust-rocket validate <目标目录>`。
 5. 报告生成位置和校验结果。
@@ -89,7 +96,7 @@ TrustRocket 是人可执行、机器友好的业务标准。Skill 负责把请�
 先只读执行：
 
 ```bash
-./trust-rocket genesis normalize <目标目录>
+./trust-rocket migrate <目标目录>
 ```
 
 按以下语义分类：
@@ -100,24 +107,51 @@ TrustRocket 是人可执行、机器友好的业务标准。Skill 负责把请�
 | 故障、问题、工单、诊断、日志处置 | 技术支持 |
 | 案例、复盘、最佳实践、根因、经验 | 案例沉淀 |
 | 客户、POC、交付、售后、风险、周运营 | 一线运营 |
-| Word、Excel、PDF、截图、日志、配置、邮件导出 | 对应域 `source/` |
-| 从原件切出的图片、页面、图表和附件 | 对应域 `cut/` |
+| Word、Excel、PDF、截图、日志、配置、邮件导出 | 对应 Markdown 内容目录的 `source/` |
+| 从原件切出的图片、页面、图表和附件 | 对应 Markdown 内容目录的 `cut/` |
+| 小程序、工具或应用 | 对应业务域内的独立应用目录，内部结构按代码项目规范 |
 
 文件名只能给出候选，不能代替内容判断。默认不移动、不覆盖、不删除。使用者要求安全补齐时执行：
 
 ```bash
-./trust-rocket genesis normalize <目标目录> --apply
+./trust-rocket migrate <目标目录> --apply
 ```
 
-`--apply` 只创建缺失入口、四域、`source/` 和 `cut/`；归属有歧义的材料保持原位并输出建议。不可逆整理必须另行获得明确授权。
+`--apply` 只创建缺失入口、四域和空的 `skills/`，并为直接含 Markdown 的内容目录补齐 `source/` 和 `cut/`；归属有歧义的材料保持原位并输出建议。不可逆整理必须另行获得明确授权。
+
+## CLI 开发辅助命令
+
+这些命令处理结构明确、可确定执行的动作；业务内容的理解、写作和判断仍由对应的 Skill 命令完成。
+
+| CLI | 行为 |
+|:--|:--|
+| `./trust-rocket update` | 仅在 TrustRocket 框架工作区干净且 `origin` 可识别时执行快进更新 |
+| `./trust-rocket document <业务域> <路径> [--title <标题>] --project <项目>` | 创建一个 Markdown，并在其同级建立 `source/`、`cut/` |
+| `./trust-rocket app <业务域> <路径> --project <项目>` | 创建或登记应用根目录，内部结构不受文档目录规则约束 |
+| `./trust-rocket material <相对路径> --origin <user\|public\|generated> --project <项目>` | 登记已存在于 `source/` 或 `cut/` 的素材；生成型二进制还需 `--approved-binary` |
+
+`document`、`app` 和 `material` 都在写入后调用 Validator，不自动提交 Git。`update` 是使用者显式调用的框架更新动作，不强制覆盖本地修改。
+
+## `/trust-rocket skill`
+
+只有当当前流程已实际跑通、用户已确认效果和后续复用意图时，才执行沉淀：
+
+1. 从当前任务中分离稳定方法与单次输入，确认触发条件、输入、前置、步骤、输出、验收和异常处理。
+2. 如果只对单个文件、客户或环境有效，先参数化；无法参数化时不沉淀。
+3. 创建 `skills/<skill-name>/SKILL.md`，仅在必要时增加 `scripts/`、`references/`、`assets/`。
+4. 脚本不得硬编码个人环境、客户敏感信息或本次任务的具体输入输出路径。
+5. 使用代表性输入验证 Skill 与脚本，确认输出符合用户已确认的验收标准。
+6. 项目级 Skill 只保存方法和必要资源；业务事实、原件与导出产物仍归入四域。
+
+Agent 可以在任务结束时说明沉淀价值和候选范围，但不得因“未来可能有用”而自动创建 Skill。
 
 ## `/trust-rocket equipment`
 
-读取 `trustrocket-contracts.json` 中 `tr-cap-equipment`，然后执行：
+按方法论的装备材料契约执行：
 
 1. 确认目标读者、使用场景、期望结果、版本、环境和风险。
 2. 检索已有装备、案例和支持事实，确定新建、改写或校验。
-3. 核对原件与来源；用户原件进入 `source/` 并使用 `user-` 前缀。
+3. 核对原件与来源；Markdown 所在目录需同时建立 `source/`、`cut/`，用户原件进入同级 `source/` 并使用 `user-` 前缀。
 4. 选择最短可执行结构，不机械套模板。
 5. 写清场景所需的前提、操作、正常结果、异常处理和升级条件。
 6. 保留关键信息原图；只在无损时转为文本结构。
@@ -128,7 +162,7 @@ TrustRocket 是人可执行、机器友好的业务标准。Skill 负责把请�
 
 ## `/trust-rocket support`
 
-读取 `trustrocket-contracts.json` 中 `tr-cap-support`。不把技术支持简化成工单字段，也不把分类当成目的。
+按方法论的 Support Contract 执行。不把技术支持简化成工单字段，也不把分类当成目的。
 
 ### 受理与标准化
 
@@ -159,7 +193,7 @@ TrustRocket 是人可执行、机器友好的业务标准。Skill 负责把请�
 
 ## `/trust-rocket case`
 
-读取 `trustrocket-contracts.json` 中 `tr-cap-case`，遵循“使用 → 解决 → 修正或创建 → 再复用”的知识循环。
+按方法论的案例契约执行，遵循“使用 → 解决 → 修正或创建 → 再复用”的知识循环。
 
 1. 先检索近似案例，决定复用、修正、合并或新建。
 2. 整理场景、目标或问题、环境、判断、处置、原因与结果。
@@ -172,7 +206,7 @@ TrustRocket 是人可执行、机器友好的业务标准。Skill 负责把请�
 
 ## `/trust-rocket operations`
 
-读取 `trustrocket-contracts.json` 中 `tr-cap-operations`。本命令维护外部业务对象状态，不维护 TrustRocket 自身状态。
+按方法论的一线运营契约执行。本命令维护外部业务对象状态，不维护 TrustRocket 自身状态。
 
 1. 确认对象、场景、事实来源、当前状态、影响、依赖和时间。
 2. 区分事实、判断、建议与未知。
@@ -193,15 +227,17 @@ ToB 的项目、POC、交付、SLA、续费与企业健康度，以及 ToC 的�
 
 校验器必须只读项目并检查：
 
-- 四域和每域 `source/`、`cut/`；
-- 业务域非法子目录；
+- 四域、项目级 `skills/`，以及直接含 Markdown 的每个内容目录是否同时具有 `source/`、`cut/`；
+- `skills/` 下的每个已沉淀 Skill 是否使用独立目录并包含 `SKILL.md`；
+- 无 Markdown 目录是否误建资源目录；
+- 应用目录是否正确豁免文档目录规则；
 - Markdown 四级及更深标题；
 - 非叶子标题直接正文；
 - `.trustrocket.json` 素材来源与 `user-` 前缀；
 - 未明确许可的生成型二进制包装；
 - `STATUS.md`、`PROGRESS.md`、`WORKLOG.md`、`TODO.md` 等框架状态文件；
 - 个人代理、本机路径、Token、Cookie、密钥等疑似泄漏；
-- `TRUSTROCKET.md`、`AGENTS.md` 与机器配置入口。
+- `AGENTS.md` 与机器配置入口。
 
 原始 `source/` 中的个人配置命中作为警告，因为它可能是诊断证据；规则、配置和业务 Markdown 中的命中作为错误。`一线运营/客户A项目状态.md` 等外部业务状态合法。
 
@@ -211,11 +247,11 @@ ToB 的项目、POC、交付、SLA、续费与企业健康度，以及 ToC 的�
 
 | 场景 | 使用的 Handoff |
 |:--|:--|
-| 重复或可复用技术问题 | `tr-ho-repeated-issue-to-case` |
-| 案例可转为一线装备 | `tr-ho-case-to-equipment` |
-| 装备需要推广与观察 | `tr-ho-equipment-to-operations` |
-| 产品缺陷交研发 | `tr-ho-product-defect-to-specrocket` |
-| 普遍需求或机会 | `tr-ho-operations-demand-routing` |
+| 重复或可复用技术问题 | 技术支持 → 案例沉淀 |
+| 案例可转为一线装备 | 案例沉淀 → 装备材料 |
+| 装备需要推广与观察 | 装备材料 → 一线运营 |
+| 产品缺陷交研发 | 技术支持 → SpecRocket |
+| 普遍需求或机会 | 一线运营 → GrowthRocket / SpecRocket / BizRocket |
 
 Handoff 只定义来源、目标、触发、输入、输出、验收、责任角色和敏感等级。不得把跨体系交接实现成对目标体系内部脚本、目录或数据库的依赖。
 

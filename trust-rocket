@@ -1,35 +1,63 @@
 #!/usr/bin/env python3
-"""TrustRocket Genesis and project validator.
+"""TrustRocket project bootstrap, helper commands, and validator.
 
-The CLI intentionally performs no Git write operations. Genesis normalization
-only adds missing framework entries and directories; it never moves, deletes,
-or overwrites existing user content.
+Init, migrate, helper, and validation commands do not create commits or push.
+Migration only adds missing framework entries and directories; it never moves,
+deletes, or overwrites existing user content. Update is an explicit fast-forward
+pull and refuses to run when the framework worktree is dirty.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 
-VERSION = "1.0.0"
+VERSION = "1.2.0"
 FRAMEWORK_ROOT = Path(__file__).resolve().parent
 TEMPLATE_ROOT = FRAMEWORK_ROOT / "template"
 DOMAINS = ("装备材料", "技术支持", "案例沉淀", "一线运营")
 RESOURCE_DIRS = ("source", "cut")
+APPLICATION_MARKER_FILES = {
+    "package.json",
+    "pyproject.toml",
+    "setup.py",
+    "manage.py",
+    "Cargo.toml",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "settings.gradle",
+    "Gemfile",
+    "composer.json",
+    "mix.exs",
+    "pubspec.yaml",
+}
 REQUIRED_ROOT_FILES = (
     "README.md",
-    "TRUSTROCKET.md",
     "AGENTS.md",
     "CLAUDE.md",
     ".trustrocket.json",
 )
+REQUIRED_PROJECT_DIRS = DOMAINS + ("skills",)
+DOMAIN_ALIASES = {
+    "equipment": "装备材料",
+    "support": "技术支持",
+    "case": "案例沉淀",
+    "operations": "一线运营",
+    "装备材料": "装备材料",
+    "技术支持": "技术支持",
+    "案例沉淀": "案例沉淀",
+    "一线运营": "一线运营",
+}
 IGNORABLE_EMPTY_ENTRIES = {".DS_Store", "Thumbs.db"}
 FRAMEWORK_STATE_NAMES = {
     "status.md",
@@ -116,7 +144,84 @@ def is_ignored_internal_path(path: Path, root: Path) -> bool:
         parts = path.relative_to(root).parts
     except ValueError:
         return False
-    return any(part in {".git", ".hg", ".svn", "__pycache__"} for part in parts)
+    return any(part in {".git", ".hg", ".svn", "__pycache__", "node_modules", ".venv"} for part in parts)
+
+
+def is_within(path: Path, roots: set[Path]) -> bool:
+    return any(path == root or root in path.parents for root in roots)
+
+
+def configured_application_roots(root: Path, config: dict, findings: list[Finding] | None = None) -> set[Path]:
+    roots: set[Path] = set()
+    values = config.get("application_paths", [])
+    if not isinstance(values, list):
+        if findings is not None:
+            findings.append(Finding("error", "TR006", ".trustrocket.json", "application_paths 必须是相对路径数组。"))
+        return roots
+    for value in values:
+        if not isinstance(value, str):
+            if findings is not None:
+                findings.append(Finding("error", "TR006", ".trustrocket.json", "application_paths 中每项必须是字符串。"))
+            continue
+        relative = Path(value)
+        if relative.is_absolute() or ".." in relative.parts or len(relative.parts) < 2 or relative.parts[0] not in DOMAINS:
+            if findings is not None:
+                findings.append(Finding("error", "TR007", value, "应用路径必须是位于四个业务域内的项目相对路径。"))
+            continue
+        absolute = root / relative
+        if not absolute.is_dir():
+            if findings is not None:
+                findings.append(Finding("error", "TR008", value, "登记的应用目录不存在。"))
+            continue
+        roots.add(absolute.resolve())
+    return roots
+
+
+def looks_like_application_root(directory: Path, filenames: set[str], dirnames: list[str]) -> bool:
+    if filenames & APPLICATION_MARKER_FILES:
+        return True
+    if any(name.endswith((".xcodeproj", ".xcworkspace")) for name in dirnames):
+        return True
+    if "index.html" in filenames and any(Path(name).suffix.lower() in {".js", ".ts", ".css"} for name in filenames):
+        return True
+    if any(Path(name).suffix.lower() in {".csproj", ".sln"} for name in filenames):
+        return True
+    return False
+
+
+def application_roots(root: Path, domain_path: Path, config: dict, findings: list[Finding] | None = None) -> set[Path]:
+    roots = {
+        path for path in configured_application_roots(root, config, findings) if path == domain_path.resolve() or domain_path.resolve() in path.parents
+    }
+    for current, dirnames, filenames in os.walk(domain_path):
+        current_path = Path(current).resolve()
+        if is_within(current_path, roots) or Path(current).name in RESOURCE_DIRS:
+            dirnames[:] = []
+            continue
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name not in RESOURCE_DIRS and name not in {".git", ".hg", ".svn", "__pycache__", "node_modules", ".venv"}
+        ]
+        if looks_like_application_root(current_path, set(filenames), dirnames):
+            roots.add(current_path)
+            dirnames[:] = []
+    return roots
+
+
+def document_directories(root: Path, domain_path: Path, config: dict, findings: list[Finding] | None = None) -> Iterable[Path]:
+    app_roots = application_roots(root, domain_path, config, findings)
+    for current, dirnames, _ in os.walk(domain_path):
+        current_path = Path(current).resolve()
+        if is_within(current_path, app_roots) or Path(current).name in RESOURCE_DIRS:
+            dirnames[:] = []
+            continue
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name not in RESOURCE_DIRS and name not in {".git", ".hg", ".svn", "__pycache__", "node_modules", ".venv"}
+        ]
+        yield Path(current)
 
 
 def iter_template_files() -> Iterable[Path]:
@@ -135,15 +240,61 @@ def copy_template(target: Path, missing_only: bool) -> list[str]:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
         copied.append(relative.as_posix())
-    for domain in DOMAINS:
-        for resource_dir in RESOURCE_DIRS:
-            (target / domain / resource_dir).mkdir(parents=True, exist_ok=True)
     return copied
+
+
+def load_config_without_reporting(root: Path) -> dict:
+    try:
+        value = json.loads((root / ".trustrocket.json").read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+
+
+def ensure_markdown_resource_dirs(root: Path) -> list[str]:
+    created: list[str] = []
+    config = load_config_without_reporting(root)
+    for domain in DOMAINS:
+        domain_path = root / domain
+        if not domain_path.is_dir():
+            continue
+        for directory in document_directories(root, domain_path, config):
+            if not any(path.is_file() for path in directory.glob("*.md")):
+                continue
+            for resource_dir in RESOURCE_DIRS:
+                target = directory / resource_dir
+                if not target.exists():
+                    target.mkdir()
+                    (target / ".gitkeep").touch()
+                    created.append(relative_display(target, root))
+    return created
 
 
 def ensure_valid_target(target: Path) -> None:
     if target.exists() and not target.is_dir():
         raise ValueError(f"目标不是目录: {target}")
+
+
+def safe_relative_path(value: str, label: str) -> Path:
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts or not path.parts:
+        raise ValueError(f"{label}必须是项目内相对路径: {value}")
+    return path
+
+
+def resolve_domain(value: str) -> str:
+    domain = DOMAIN_ALIASES.get(value)
+    if domain is None:
+        choices = "、".join(DOMAINS)
+        raise ValueError(f"未知业务域 {value}；可使用 equipment/support/case/operations 或 {choices}")
+    return domain
+
+
+def write_project_config(root: Path, config: dict) -> None:
+    (root / ".trustrocket.json").write_text(
+        json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def command_init(target: Path) -> int:
@@ -154,7 +305,7 @@ def command_init(target: Path) -> int:
     if target.exists():
         remaining = [p for p in target.iterdir() if p.name not in IGNORABLE_EMPTY_ENTRIES]
         if remaining:
-            print("错误: genesis init 只接受不存在或为空的目录；已有项目请使用 genesis normalize。", file=sys.stderr)
+            print("错误: init 只接受不存在或为空的目录；已有项目请使用 migrate。", file=sys.stderr)
             return 2
     else:
         target.mkdir(parents=True)
@@ -181,16 +332,16 @@ def classify_candidate(path: Path) -> str:
         domain = matches[0]
         if path.suffix.lower() in TEXT_EXTENSIONS:
             return f"候选业务域: {domain}（需结合内容确认）"
-        return f"候选原材料: {domain}/source/（需确认来源与 user- 前缀）"
+        return f"候选原材料: {domain}内对应 Markdown 内容目录/source/（需确认来源与 user- 前缀）"
     if len(matches) > 1:
         return f"多个候选业务域: {'、'.join(matches)}（必须人工判断）"
     if path.suffix.lower() in BINARY_PACKAGING_EXTENSIONS:
-        return "候选原材料: 某业务域/source/（仅凭文件名无法判断业务域）"
+        return "候选原材料: 某业务域内对应 Markdown 内容目录/source/（仅凭文件名无法判断业务域）"
     return "未能可靠分类，保持原位并读取内容后判断"
 
 
 def normalization_suggestions(target: Path) -> list[tuple[str, str]]:
-    known_root = set(REQUIRED_ROOT_FILES) | set(DOMAINS) | {".gitignore", ".git"}
+    known_root = set(REQUIRED_ROOT_FILES) | set(REQUIRED_PROJECT_DIRS) | {".gitignore", ".git"}
     suggestions: list[tuple[str, str]] = []
     for entry in sorted(target.iterdir(), key=lambda p: p.name):
         if entry.name in known_root or entry.name in IGNORABLE_EMPTY_ENTRIES:
@@ -214,7 +365,8 @@ def command_normalize(target: Path, apply: bool) -> int:
         except OSError as exc:
             print(f"错误: 安全补齐失败: {exc}", file=sys.stderr)
             return 2
-        print(f"已安全补齐 {len(copied)} 个缺失骨架文件或占位；未覆盖、移动、删除内容。")
+        resources = ensure_markdown_resource_dirs(target)
+        print(f"已安全补齐 {len(copied)} 个缺失骨架文件或占位，并为 {len(resources)} 个 Markdown 资源目录补齐 source/cut；未覆盖、移动、删除内容。")
     else:
         print("只读规范化分析；使用 --apply 仅补齐缺失骨架，不会移动现有内容。")
     if suggestions:
@@ -224,6 +376,126 @@ def command_normalize(target: Path, apply: bool) -> int:
     else:
         print("未发现需要候选归类的根部内容。")
     return command_validate(target)
+
+
+def command_update() -> int:
+    if not (FRAMEWORK_ROOT / ".git").is_dir():
+        print("错误: 当前 TrustRocket 不是 Git 克隆，无法自动更新。", file=sys.stderr)
+        return 2
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=FRAMEWORK_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if status.returncode != 0:
+        print("错误: 无法读取 TrustRocket Git 状态。", file=sys.stderr)
+        return 2
+    if status.stdout.strip():
+        print("错误: TrustRocket 工作区存在未提交修改；请先人工处理后再 update。", file=sys.stderr)
+        return 2
+    remote = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=FRAMEWORK_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if remote.returncode != 0 or "TrustRocket" not in remote.stdout:
+        print("错误: origin 不是可识别的 TrustRocket 远端。", file=sys.stderr)
+        return 2
+    result = subprocess.run(["git", "pull", "--ff-only"], cwd=FRAMEWORK_ROOT, check=False)
+    if result.returncode != 0:
+        print("错误: 更新失败；本地内容未被强制覆盖。", file=sys.stderr)
+        return result.returncode
+    print(f"TrustRocket 已更新到 {VERSION} 兼容结构。")
+    return 0
+
+
+def require_project(root: Path) -> dict:
+    ensure_valid_target(root)
+    if not root.is_dir() or not (root / ".trustrocket.json").is_file():
+        raise ValueError(f"目标不是 TrustRocket 业务项目: {root}")
+    config = load_config_without_reporting(root)
+    if not config:
+        raise ValueError(f"无法读取项目配置: {root / '.trustrocket.json'}")
+    return config
+
+
+def command_document(project: Path, domain_value: str, relative_value: str, title: str | None) -> int:
+    config = require_project(project)
+    domain = resolve_domain(domain_value)
+    relative = safe_relative_path(relative_value, "文档路径")
+    if any(part in RESOURCE_DIRS for part in relative.parts):
+        raise ValueError("业务 Markdown 不能创建在 source/ 或 cut/ 中。")
+    if relative.suffix.lower() != ".md":
+        relative = relative.with_suffix(".md")
+    target = project / domain / relative
+    app_roots = application_roots(project, project / domain, config)
+    if is_within(target.parent.resolve(), app_roots):
+        raise ValueError("document 命令不用于应用代码树内部的 Markdown。")
+    if target.exists():
+        raise ValueError(f"文档已存在，拒绝覆盖: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(f"# {title or target.stem}\n", encoding="utf-8")
+    for resource_dir in RESOURCE_DIRS:
+        directory = target.parent / resource_dir
+        directory.mkdir(exist_ok=True)
+        (directory / ".gitkeep").touch(exist_ok=True)
+    print(f"已创建 Markdown 内容: {relative_display(target, project)}")
+    print(f"已配套资源目录: {relative_display(target.parent / 'source', project)}、{relative_display(target.parent / 'cut', project)}")
+    return command_validate(project)
+
+
+def command_app(project: Path, domain_value: str, relative_value: str) -> int:
+    config = require_project(project)
+    domain = resolve_domain(domain_value)
+    relative = safe_relative_path(relative_value, "应用路径")
+    if any(part in RESOURCE_DIRS for part in relative.parts):
+        raise ValueError("应用目录不能位于 source/ 或 cut/ 中。")
+    target = project / domain / relative
+    if target.exists() and not target.is_dir():
+        raise ValueError(f"应用路径已被文件占用: {target}")
+    created = not target.exists()
+    target.mkdir(parents=True, exist_ok=True)
+    if created:
+        (target / ".gitkeep").touch()
+    registered_path = Path(domain, relative).as_posix()
+    values = config.setdefault("application_paths", [])
+    if not isinstance(values, list):
+        raise ValueError(".trustrocket.json 的 application_paths 不是数组。")
+    if registered_path not in values:
+        values.append(registered_path)
+        values.sort()
+        write_project_config(project, config)
+    action = "创建并登记" if created else "登记"
+    print(f"已{action}应用目录: {registered_path}")
+    return command_validate(project)
+
+
+def command_material(project: Path, relative_value: str, origin: str, approved_binary: bool) -> int:
+    config = require_project(project)
+    relative = safe_relative_path(relative_value, "素材路径")
+    target = project / relative
+    if not target.is_file():
+        raise ValueError(f"素材文件不存在: {target}")
+    if origin == "user" and not target.name.startswith("user-"):
+        raise ValueError("用户素材及其切出资源必须使用 user- 前缀。")
+    if origin == "public" and target.name.startswith("user-"):
+        raise ValueError("公共素材不得使用 user- 前缀。")
+    if origin == "generated" and target.suffix.lower() in BINARY_PACKAGING_EXTENSIONS and not approved_binary:
+        raise ValueError("生成型二进制必须显式使用 --approved-binary。")
+    materials = config.setdefault("materials", {})
+    if not isinstance(materials, dict):
+        raise ValueError(".trustrocket.json 的 materials 不是对象。")
+    record: dict[str, object] = {"origin": origin}
+    if approved_binary:
+        record["approved_binary"] = True
+    materials[relative.as_posix()] = record
+    write_project_config(project, config)
+    print(f"已登记素材: {relative.as_posix()} ({origin})")
+    return command_validate(project)
 
 
 def read_json_config(root: Path, findings: list[Finding]) -> dict:
@@ -238,41 +510,66 @@ def read_json_config(root: Path, findings: list[Finding]) -> dict:
         return {}
     if config.get("domains") != list(DOMAINS):
         findings.append(Finding("error", "TR003", ".trustrocket.json", "domains 必须且只能按标准顺序包含四个业务域。"))
-    if config.get("content_model") != "flat-markdown-source-cut":
-        findings.append(Finding("error", "TR004", ".trustrocket.json", "content_model 必须为 flat-markdown-source-cut。"))
+    if config.get("content_model") != "markdown-scoped-source-cut":
+        findings.append(Finding("error", "TR004", ".trustrocket.json", "content_model 必须为 markdown-scoped-source-cut。"))
     if not isinstance(config.get("materials", {}), dict):
         findings.append(Finding("error", "TR005", ".trustrocket.json", "materials 必须是路径到来源信息的对象。"))
+    configured_application_roots(root, config, findings)
     return config
 
 
-def validate_structure(root: Path, findings: list[Finding]) -> None:
+def validate_structure(root: Path, config: dict, findings: list[Finding]) -> None:
     for required in REQUIRED_ROOT_FILES:
         if not (root / required).is_file():
             findings.append(Finding("error", "TR010", required, "缺少 TrustRocket 项目入口文件。"))
+    if not (root / "skills").is_dir():
+        findings.append(Finding("error", "TR013", "skills", "缺少项目级 Skill 目录。"))
     for domain in DOMAINS:
         domain_path = root / domain
         if not domain_path.is_dir():
             findings.append(Finding("error", "TR011", domain, "缺少标准业务域目录。"))
             continue
-        for resource_dir in RESOURCE_DIRS:
-            if not (domain_path / resource_dir).is_dir():
-                findings.append(
-                    Finding("error", "TR012", f"{domain}/{resource_dir}", "缺少强制资源目录。")
-                )
-        for child in domain_path.iterdir():
-            if child.is_dir() and child.name not in RESOURCE_DIRS:
-                findings.append(
-                    Finding("error", "TR013", relative_display(child, root), "业务域只允许 source/ 和 cut/ 子目录。")
-                )
-            if child.is_file() and child.name != ".gitkeep" and child.suffix.lower() != ".md":
+        for directory in document_directories(root, domain_path, config):
+            has_markdown = any(path.is_file() for path in directory.glob("*.md"))
+            existing_resources = [name for name in RESOURCE_DIRS if (directory / name).is_dir()]
+            if has_markdown:
+                for resource_dir in RESOURCE_DIRS:
+                    if not (directory / resource_dir).is_dir():
+                        findings.append(
+                            Finding(
+                                "error",
+                                "TR012",
+                                relative_display(directory / resource_dir, root),
+                                "当前目录直接包含 Markdown，必须同时存在 source/ 和 cut/。",
+                            )
+                        )
+            elif existing_resources:
                 findings.append(
                     Finding(
-                        "error",
-                        "TR014",
-                        relative_display(child, root),
-                        "业务域根部只允许平铺 Markdown；原件放 source/，切出资源放 cut/。",
+                        "warning",
+                        "TR015",
+                        relative_display(directory, root),
+                        "当前目录没有直接包含 Markdown，默认不需要 source/ 或 cut/。",
                     )
                 )
+
+
+def validate_project_skills(root: Path, findings: list[Finding]) -> None:
+    skills_root = root / "skills"
+    if not skills_root.is_dir():
+        return
+    for entry in sorted(skills_root.iterdir(), key=lambda path: path.name):
+        if entry.name == ".gitkeep":
+            continue
+        if not entry.is_dir():
+            findings.append(
+                Finding("error", "TR060", relative_display(entry, root), "skills/ 下每个 Skill 必须使用独立目录。")
+            )
+            continue
+        if not (entry / "SKILL.md").is_file():
+            findings.append(
+                Finding("error", "TR061", relative_display(entry, root), "已沉淀的 Skill 缺少 SKILL.md 入口。")
+            )
 
 
 def parse_markdown(path: Path, root: Path, findings: list[Finding]) -> None:
@@ -368,25 +665,26 @@ def parse_markdown(path: Path, root: Path, findings: list[Finding]) -> None:
             )
 
 
-def validate_markdown(root: Path, findings: list[Finding]) -> None:
+def validate_markdown(root: Path, config: dict, findings: list[Finding]) -> None:
     for domain in DOMAINS:
         domain_path = root / domain
         if not domain_path.is_dir():
             continue
-        for path in domain_path.glob("*.md"):
-            parse_markdown(path, root, findings)
-        for resource_dir in RESOURCE_DIRS:
-            resource_path = domain_path / resource_dir
-            if resource_path.is_dir():
-                for markdown in resource_path.rglob("*.md"):
-                    findings.append(
-                        Finding(
-                            "warning",
-                            "TR026",
-                            relative_display(markdown, root),
-                            "source/ 与 cut/ 原则上不主动保存业务 Markdown。",
+        for directory in document_directories(root, domain_path, config):
+            for path in directory.glob("*.md"):
+                parse_markdown(path, root, findings)
+            for resource_dir in RESOURCE_DIRS:
+                resource_path = directory / resource_dir
+                if resource_path.is_dir():
+                    for markdown in resource_path.rglob("*.md"):
+                        findings.append(
+                            Finding(
+                                "warning",
+                                "TR026",
+                                relative_display(markdown, root),
+                                "source/ 与 cut/ 原则上不主动保存业务 Markdown。",
+                            )
                         )
-                    )
 
 
 def normalize_material_record(record: object) -> tuple[str | None, bool]:
@@ -416,12 +714,28 @@ def validate_materials(root: Path, config: dict, findings: list[Finding]) -> Non
         if (
             len(material_path.parts) < 3
             or material_path.parts[0] not in DOMAINS
-            or material_path.parts[1] not in RESOURCE_DIRS
+            or not any(part in RESOURCE_DIRS for part in material_path.parts[1:-1])
         ):
             findings.append(
-                Finding("error", "TR038", relative, "素材必须登记在某个业务域的 source/ 或 cut/ 中。")
+                Finding("error", "TR038", relative, "素材必须登记在某个 Markdown 内容目录同级的 source/ 或 cut/ 中。")
             )
         absolute = root / material_path
+        if len(material_path.parts) >= 3 and material_path.parts[0] in DOMAINS:
+            resource_indexes = [
+                index for index, part in enumerate(material_path.parts[1:-1], start=1) if part in RESOURCE_DIRS
+            ]
+            if resource_indexes:
+                resource_index = resource_indexes[0]
+                content_directory = root.joinpath(*material_path.parts[:resource_index])
+                if not any(path.is_file() for path in content_directory.glob("*.md")):
+                    findings.append(
+                        Finding("error", "TR038", relative, "source/ 或 cut/ 的同级内容目录必须直接包含 Markdown。")
+                    )
+                app_roots = application_roots(root, root / material_path.parts[0], config)
+                if is_within(absolute.resolve(), app_roots):
+                    findings.append(
+                        Finding("error", "TR038", relative, "应用代码树不使用 TrustRocket 文档素材登记。")
+                    )
         origin, approved_binary = normalize_material_record(record)
         if origin not in {"user", "public", "generated"}:
             findings.append(Finding("error", "TR032", relative, "origin 必须是 user、public 或 generated。"))
@@ -437,18 +751,22 @@ def validate_materials(root: Path, config: dict, findings: list[Finding]) -> Non
         if not absolute.is_file():
             findings.append(Finding("error", "TR036", relative, "素材登记指向的文件不存在。"))
     for domain in DOMAINS:
-        for resource_dir in RESOURCE_DIRS:
-            resource_path = root / domain / resource_dir
-            if not resource_path.is_dir():
-                continue
-            for file_path in resource_path.rglob("*"):
-                if not file_path.is_file() or file_path.name == ".gitkeep":
+        domain_path = root / domain
+        if not domain_path.is_dir():
+            continue
+        for directory in document_directories(root, domain_path, config):
+            for resource_dir in RESOURCE_DIRS:
+                resource_path = directory / resource_dir
+                if not resource_path.is_dir():
                     continue
-                relative = relative_display(file_path, root)
-                if relative not in registered:
-                    findings.append(
-                        Finding("warning", "TR037", relative, "素材未在 .trustrocket.json 的 materials 中登记来源。")
-                    )
+                for file_path in resource_path.rglob("*"):
+                    if not file_path.is_file() or file_path.name == ".gitkeep":
+                        continue
+                    relative = relative_display(file_path, root)
+                    if relative not in registered:
+                        findings.append(
+                            Finding("warning", "TR037", relative, "素材未在 .trustrocket.json 的 materials 中登记来源。")
+                        )
 
 
 def validate_state_files(root: Path, findings: list[Finding]) -> None:
@@ -471,7 +789,7 @@ def is_under_source(path: Path, root: Path) -> bool:
         parts = path.relative_to(root).parts
     except ValueError:
         return False
-    return len(parts) >= 2 and parts[0] in DOMAINS and parts[1] == "source"
+    return len(parts) >= 3 and parts[0] in DOMAINS and "source" in parts[1:-1]
 
 
 def validate_personal_config(root: Path, findings: list[Finding]) -> None:
@@ -480,7 +798,7 @@ def validate_personal_config(root: Path, findings: list[Finding]) -> None:
             continue
         if not path.is_file() or path.name == ".gitkeep":
             continue
-        if path.suffix.lower() not in TEXT_EXTENSIONS and path.name not in {"AGENTS.md", "TRUSTROCKET.md"}:
+        if path.suffix.lower() not in TEXT_EXTENSIONS and path.name != "AGENTS.md":
             continue
         try:
             if path.stat().st_size > 2_000_000:
@@ -504,9 +822,10 @@ def validate_personal_config(root: Path, findings: list[Finding]) -> None:
 
 def validate_project(root: Path) -> list[Finding]:
     findings: list[Finding] = []
-    validate_structure(root, findings)
     config = read_json_config(root, findings)
-    validate_markdown(root, findings)
+    validate_structure(root, config, findings)
+    validate_project_skills(root, findings)
+    validate_markdown(root, config, findings)
     validate_materials(root, config, findings)
     validate_state_files(root, findings)
     validate_personal_config(root, findings)
@@ -533,18 +852,35 @@ def command_validate(target: Path) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trust-rocket",
-        description="TrustRocket Genesis 与业务项目契约校验器（不会执行 Git 写操作）",
+        description="TrustRocket 项目初始化、开发辅助与契约校验工具",
     )
     parser.add_argument("--version", action="version", version=f"TrustRocket {VERSION}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    genesis = subparsers.add_parser("genesis", help="初始化或规范化 TrustRocket 业务项目")
-    genesis_subparsers = genesis.add_subparsers(dest="genesis_command", required=True)
-    init_parser = genesis_subparsers.add_parser("init", help="在不存在或空目录创建最小业务项目")
+    init_parser = subparsers.add_parser("init", help="在不存在或空目录创建最小业务项目")
     init_parser.add_argument("target", type=Path, nargs="?", default=Path("."))
-    normalize_parser = genesis_subparsers.add_parser("normalize", help="分析已有项目并可安全补齐骨架")
-    normalize_parser.add_argument("target", type=Path, nargs="?", default=Path("."))
-    normalize_parser.add_argument("--apply", action="store_true", help="只补齐缺失骨架，不移动、删除或覆盖")
+    migrate_parser = subparsers.add_parser("migrate", help="分析已有项目并可安全补齐骨架")
+    migrate_parser.add_argument("target", type=Path, nargs="?", default=Path("."))
+    migrate_parser.add_argument("--apply", action="store_true", help="只补齐缺失骨架，不移动、删除或覆盖")
+
+    subparsers.add_parser("update", help="在工作区干净时从 origin 快进更新 TrustRocket")
+
+    document_parser = subparsers.add_parser("document", help="创建 Markdown 内容并配套 source/cut")
+    document_parser.add_argument("domain", help="equipment/support/case/operations 或中文业务域")
+    document_parser.add_argument("path", help="业务域内相对路径；可省略 .md")
+    document_parser.add_argument("--title", help="一级标题；默认使用文件名")
+    document_parser.add_argument("--project", type=Path, default=Path("."), help="TrustRocket 业务项目路径")
+
+    app_parser = subparsers.add_parser("app", help="创建或登记业务域内的应用目录")
+    app_parser.add_argument("domain", help="equipment/support/case/operations 或中文业务域")
+    app_parser.add_argument("path", help="业务域内应用相对路径")
+    app_parser.add_argument("--project", type=Path, default=Path("."), help="TrustRocket 业务项目路径")
+
+    material_parser = subparsers.add_parser("material", help="登记已存在的 source/cut 素材")
+    material_parser.add_argument("path", help="项目根目录下的素材相对路径")
+    material_parser.add_argument("--origin", choices=("user", "public", "generated"), required=True)
+    material_parser.add_argument("--approved-binary", action="store_true", help="明确批准生成型二进制")
+    material_parser.add_argument("--project", type=Path, default=Path("."), help="TrustRocket 业务项目路径")
 
     validate_parser = subparsers.add_parser("validate", help="只读校验 TrustRocket 业务项目")
     validate_parser.add_argument("target", type=Path, nargs="?", default=Path("."))
@@ -555,10 +891,18 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     try:
-        if args.command == "genesis" and args.genesis_command == "init":
+        if args.command == "init":
             return command_init(args.target)
-        if args.command == "genesis" and args.genesis_command == "normalize":
+        if args.command == "migrate":
             return command_normalize(args.target, args.apply)
+        if args.command == "update":
+            return command_update()
+        if args.command == "document":
+            return command_document(args.project, args.domain, args.path, args.title)
+        if args.command == "app":
+            return command_app(args.project, args.domain, args.path)
+        if args.command == "material":
+            return command_material(args.project, args.path, args.origin, args.approved_binary)
         if args.command == "validate":
             return command_validate(args.target)
     except (OSError, ValueError) as exc:
