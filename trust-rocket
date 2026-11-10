@@ -8,14 +8,14 @@
 #   ./trust-rocket init [项目名]
 #   ./trust-rocket migrate
 #   ./trust-rocket preview [项目路径]
-#   ./trust-rocket update [项目路径]
+#   ./trust-rocket update
 #   ./trust-rocket help
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATE="$SCRIPT_DIR/template"
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 print_usage() {
   cat <<EOF
@@ -25,7 +25,7 @@ TrustRocket CLI — 服务体系框架引导工具 (v$VERSION)
   ./trust-rocket init [项目名]      从 template/ 复制骨架（无参=当前目录，有参=新建目录）
   ./trust-rocket migrate            就地重构当前项目到规范结构（零数据丢失）
   ./trust-rocket preview [路径]     预览项目内容组织架构
-  ./trust-rocket update [路径]      更新本地 skill + 升级项目
+  ./trust-rocket update             更新本地 skill 源（项目升级用 migrate）
   ./trust-rocket help               显示本帮助
 
 详情见 SKILL.md 与 trustrocket-convention.zh.md
@@ -156,8 +156,6 @@ cmd_preview() {
 }
 
 cmd_update() {
-  local TARGET="${1:-}"
-
   echo "→ 更新本地 TrustRocket skill（工具感知）..."
   echo ""
   echo "检测 AI 工具 ..."
@@ -183,16 +181,9 @@ cmd_update() {
   fi
 
   echo ""
-
-  if [ -n "$TARGET" ] && [ -d "$TARGET" ]; then
-    echo "→ 升级项目骨架: $TARGET ..."
-    echo "  提示：只补充缺失骨架文件，不覆盖业务内容。由 AI 执行对比与补齐。"
-  elif [ -n "$TARGET" ]; then
-    echo "⚠️  项目路径不存在: $TARGET (跳过项目升级)"
-  fi
-
-  echo ""
   echo "✅ update 完成 (v$VERSION)"
+  echo ""
+  echo "提示：已有项目要升级到最新框架，请在各项目目录内执行 /trust-rocket migrate。"
 }
 
 case "${1:-help}" in
