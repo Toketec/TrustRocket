@@ -6,7 +6,7 @@
 #
 # Usage:
 #   ./trust-rocket init [项目名]
-#   ./trust-rocket migrate [源目录]
+#   ./trust-rocket migrate
 #   ./trust-rocket preview [项目路径]
 #   ./trust-rocket update [项目路径]
 #   ./trust-rocket help
@@ -23,7 +23,7 @@ TrustRocket CLI — 服务体系框架引导工具 (v$VERSION)
 
 用法:
   ./trust-rocket init [项目名]      从 template/ 复制骨架（无参=当前目录，有参=新建目录）
-  ./trust-rocket migrate [源目录]   迁移外部杂乱目录（复制归类，零数据丢失）
+  ./trust-rocket migrate            就地重构当前项目到规范结构（零数据丢失）
   ./trust-rocket preview [路径]     预览项目内容组织架构
   ./trust-rocket update [路径]      更新本地 skill + 升级项目
   ./trust-rocket help               显示本帮助
@@ -74,43 +74,37 @@ cmd_init() {
   echo "  3. 主要做哪几块服务？"
   echo "  4. 有没有现成杂乱材料需要整理？"
   echo ""
-  echo "骨架完成。下一步可用 /trust-rocket migrate 整理现成材料。"
+  echo "骨架完成。如需把已有的散乱内容整理进框架，可用 /trust-rocket migrate 就地重构。"
 }
 
 cmd_migrate() {
-  local SRC_DIR="${1:-}"
+  local TARGET_DIR="${1:-.}"
 
-  if [ -z "$SRC_DIR" ]; then
-    echo "用法: ./trust-rocket migrate <源目录>"
-    echo "示例: ./trust-rocket migrate ~/Desktop/杂乱客服文件"
+  if [ ! -d "$TARGET_DIR" ]; then
+    echo "错误：目录不存在: $TARGET_DIR"
     exit 1
   fi
 
-  if [ ! -d "$SRC_DIR" ]; then
-    echo "错误：源目录不存在: $SRC_DIR"
-    exit 1
-  fi
-
-  echo "→ 扫描源目录（只读，不修改任何文件）..."
-  echo "  源目录: $SRC_DIR"
+  echo "→ 扫描当前项目目录（只读，不修改任何文件）..."
+  echo "  目标目录: $TARGET_DIR"
   echo ""
 
-  # 只读扫描：列出所有文件（含隐藏文件），供 AI 分类
+  # 只读扫描：列出所有文件（含隐藏文件），排除 .git 与 .DS_Store，供 AI 分类
   echo "=== 文件清单 ==="
-  find "$SRC_DIR" -type f | sort
+  find "$TARGET_DIR" -type f -not -path '*/.git/*' -not -name '.DS_Store' | sort
   echo ""
   echo "=== 目录清单 ==="
-  find "$SRC_DIR" -type d | sort
+  find "$TARGET_DIR" -type d -not -path '*/.git/*' -not -name '.git' | sort
   echo ""
 
-  echo "→ 扫描完成。以上文件需由 AI 按四大板块语义分类并复制归类。"
+  echo "→ 扫描完成。以上文件需由 AI 按四大板块语义就地归类。"
   echo ""
   echo "⚠️  迁移策略（务必遵守）："
-  echo "  1. 复制，不移动 —— 源目录保留不动，绝不删除"
+  echo "  1. 就地重构 —— 在当前项目目录内移动归类 + 补骨架，不复制、不另建目录"
   echo "  2. 零数据丢失 —— 所有文件必须归类，判断不了的放入「待分类」，绝不丢弃"
   echo "  3. 核对确认 —— 迁移后生成映射表，与用户逐项核对无遗漏"
   echo ""
-  echo "请交给 AI 执行 /trust-rocket migrate，完成分类、复制归类与核对。"
+  echo "请交给 AI 执行 /trust-rocket migrate，完成分类、就地归类与核对。"
 }
 
 cmd_preview() {
