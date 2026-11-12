@@ -3,7 +3,7 @@ name: trust-rocket
 description: "斜杠命令 /trust-rocket — 服务体系框架（TrustRocket）。子命令：init, migrate, preview, update。"
 license: MIT
 metadata:
-  version: "1.7.0"
+  version: "1.7.1"
 ---
 
 # `/trust-rocket` — TrustRocket 项目引导命令
